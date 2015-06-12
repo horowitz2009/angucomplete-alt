@@ -49,7 +49,7 @@
     // Set the default template for this directive
     $templateCache.put(TEMPLATE_URL,
         '<div class="angucomplete-holder" ng-class="{\'angucomplete-dropdown-visible\': showDropdown}">' +
-        '  <input id="{{id}}_value" name={{inputName}} ng-class="{\'angucomplete-input-not-empty\': notEmpty}" ng-model="searchStr" ng-disabled="disableInput" type="{{type}}" placeholder="{{placeholder}}" maxlength="{{maxlength}}" ng-focus="onFocusHandler()" class="{{inputClass}}" ng-focus="resetHideResults()" ng-blur="hideResults($event)" autocapitalize="off" autocorrect="off" autocomplete="off" ng-change="inputChangeHandler(searchStr)"/>' +
+        '  <input id="{{id}}_value" ng-model="searchStr" ng-disabled="disableInput" type="{{type}}" placeholder="{{placeholder}}" maxlength="{{maxlength}}" ng-focus="onFocusHandler()" class="{{inputClass}}" ng-focus="resetHideResults()" ng-blur="hideResults($event)" autocapitalize="off" autocorrect="off" autocomplete="off" ng-change="inputChangeHandler(searchStr)"/>' +
         '  <div id="{{id}}_dropdown" class="angucomplete-dropdown" ng-show="showDropdown">' +
         '    <div class="angucomplete-searching" ng-show="searching" ng-bind="textSearching"></div>' +
         '    <div class="angucomplete-searching" ng-show="!searching && (!results || results.length == 0)" ng-bind="textNoResults"></div>' +
@@ -72,6 +72,11 @@
       require: '^?form',
       scope: {
         selectedObject: '=',
+        customSelect: '=',
+        customLookup: '=',
+        customLookupOnly: '=',
+        customMatching: '=',
+        keepInitialValueBinding: '=',
         disableInput: '=',
         initialValue: '@',
         localData: '=',
@@ -124,6 +129,13 @@
           mousedownOn = event.target.id;
         });
 
+        scope.sf = [];
+        var searchFields = scope.searchFields.split(',');
+        
+        for (var s = 0; s < searchFields.length; s++) {
+          scope.sf.push(parseField(searchFields[s]));  
+        }
+        
         scope.currentIndex = null;
         scope.searching = false;
         scope.searchStr = scope.initialValue;
@@ -131,7 +143,8 @@
           if (newval && newval.length > 0) {
             scope.searchStr = scope.initialValue;
             handleRequired(true);
-            unbindInitialValue();
+            if (!scope.keepInitialValueBinding)
+              unbindInitialValue();
           }
         });
 
@@ -155,7 +168,7 @@
 
         function callOrAssign(value) {
           if (typeof scope.selectedObject === 'function') {
-            scope.selectedObject(value);
+            scope.selectedObject(value, scope.localData);
           }
           else {
             scope.selectedObject = value;
@@ -224,7 +237,6 @@
         }
 
         function handleRequired(valid) {
-          scope.notEmpty = valid;
           validState = scope.searchStr;
           if (scope.fieldRequired && ctrl) {
             ctrl.$setValidity(requiredClassName, valid);
@@ -233,7 +245,7 @@
 
         function keyupHandler(event) {
           var which = ie8EventNormalizer(event);
-          if (which === KEY_LF || which === KEY_RT) {
+          if (which === KEY_LF || which === KEY_RT || which === KEY_TAB || which === 16) {
             // do nothing
             return;
           }
@@ -320,10 +332,12 @@
         function updateInputField(){
           var current = scope.results[scope.currentIndex];
           if (scope.matchClass) {
-            inputField.val(extractTitle(current.originalObject));
+            //inputField.val(extractTitle(current.originalObject));
+            //console.log("inputField.val e " + current.title);
           }
           else {
-            inputField.val(current.title);
+            //inputField.val(current.title);
+            //console.log("inputField.val " + current.title);
           }
         }
 
@@ -405,10 +419,6 @@
 
         function httpSuccessCallbackGen(str) {
           return function(responseData, status, headers, config) {
-            // normalize return obejct from promise
-            if (!status && !headers && !config) {
-              responseData = responseData.data;
-            }
             scope.searching = false;
             processResults(
               extractValue(responseFormatter(responseData), scope.remoteUrlDataField),
@@ -480,25 +490,72 @@
           scope.currentIndex = -1;
           scope.results = [];
         }
-
+        
+        function parseField(field) {
+          var searchMethod = "contains";
+          var newField = field; 
+          if (field.indexOf('*') == 0) {
+            searchMethod = 'endsWith';
+            newField = field.substring(1);
+          }
+          if(newField.indexOf('*', newField.length - 1) !== -1) {
+            if (searchMethod == 'endsWith') 
+              searchMethod = "contains";
+            else 
+              searchMethod = "startsWith";
+            
+            newField = newField.substring(0, newField.length - 1);
+          }
+          
+          return {"field": newField, "method": searchMethod};
+        }
+        
+        function matching(value, str, method) {
+          if (method == "contains")
+            return value.indexOf(str) >= 0;
+          else if (method == "startsWith")
+            return value.indexOf(str) == 0;
+          else
+            return value.indexOf(str, value.length - str.length) !== -1;
+          
+          return false;
+        }
+        
         function getLocalResults(str) {
           var i, match, s, value,
-              searchFields = scope.searchFields.split(','),
               matches = [];
-
-          for (i = 0; i < scope.localData.length; i++) {
-            match = false;
-
-            for (s = 0; s < searchFields.length; s++) {
-              value = extractValue(scope.localData[i], searchFields[s]) || '';
-              match = match || (value.toLowerCase().indexOf(str.toLowerCase()) >= 0);
-            }
-
-            if (match) {
-              matches[matches.length] = scope.localData[i];
+          console.log("getLocalResults...");
+          
+          //custom matches before ordinary
+          if (scope.customLookup) {
+            var moreMatches = scope.customLookup(str, scope.localData);
+            if (moreMatches && moreMatches.length > 0) {
+              for(var m = 0; m < moreMatches.length; m++)
+                matches[matches.length] = moreMatches[m];
             }
           }
-
+          if (!scope.customLookupOnly) {
+            if (scope.customMatching) {
+              for (i = 0; i < scope.localData.length; i++) {
+                match = false;
+                match = match || scope.customMatching(str, scope.localData[i]);
+                if (match)
+                  matches[matches.length] = scope.localData[i];
+              }
+            } else {
+              //ordinary
+              for (i = 0; i < scope.localData.length; i++) {
+                match = false;
+                for (s = 0; s < scope.sf.length; s++) {
+                  value = extractValue(scope.localData[i], scope.sf[s].field) || '';
+                  match = match || matching(value.toLowerCase(), str.toLowerCase(), scope.sf[s].method);
+                }
+                if (match) {
+                  matches[matches.length] = scope.localData[i];
+                }
+              }
+            }
+          }
           scope.searching = false;
           processResults(matches, str);
         }
@@ -644,14 +701,17 @@
             scope.searchStr = null;
           }
           else {
-            scope.searchStr = result.title;
+            if (scope.customSelect)
+              scope.searchStr = scope.customSelect(result);
+            else
+              scope.searchStr = result.title;
           }
           callOrAssign(result);
           clearResults();
         };
 
         scope.inputChangeHandler = function(str) {
-          if (str.length < minlength) {
+          if (!str || str.length < minlength) {
             clearResults();
           }
           else if (str.length === 0 && minlength === 0) {
@@ -700,8 +760,6 @@
             handleRequired(false);
           }
         }
-
-        scope.type = attrs.type ? attrs.type : 'text';
 
         // set strings for "Searching..." and "No results"
         scope.textSearching = attrs.textSearching ? attrs.textSearching : TEXT_SEARCHING;
