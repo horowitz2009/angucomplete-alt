@@ -35,7 +35,7 @@ describe('angucomplete-alt', function() {
       $scope.$digest();
       expect(element.find('#ex1_value').attr('placeholder')).toEqual('Search countries');
     });
-      
+
     it('should render maxlength string', function() {
       var element = angular.element('<div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="selectedCountry" local-data="countries" search-fields="name" title-field="name" maxlength="25" />');
       $scope.selectedCountry = null;
@@ -995,8 +995,8 @@ describe('angucomplete-alt', function() {
   });
 
   describe('initial value', function() {
-    it('should set initial value', function() {
-      var element = angular.element('<div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="countrySelected" local-data="countries" search-fields="name" title-field="name" minlength="1" initial-value="{{initialValue}}"/>');
+    it('should set initial value from string', function() {
+      var element = angular.element('<div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="countrySelected" local-data="countries" search-fields="name" title-field="name" minlength="1" initial-value="initialValue"/>');
       $scope.countries = [
         {name: 'Afghanistan', code: 'AF'},
         {name: 'Aland Islands', code: 'AX'},
@@ -1011,8 +1011,33 @@ describe('angucomplete-alt', function() {
       expect(element.isolateScope().searchStr).toBe('Japan');
     });
 
+    it('should set initial value from object', function() {
+
+      var element = angular.element('<div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="grabCountryCode" local-data="countries" search-fields="name" title-field="name" minlength="1" initial-value="initialValue"/>');
+
+      $scope.countryCode = null;
+      $scope.grabCountryCode = function(value) {
+        $scope.countryCode = value.originalObject.code;
+      };
+
+      $scope.countries = [
+        {name: 'Afghanistan', code: 'AF'},
+        {name: 'Aland Islands', code: 'AX'},
+        {name: 'Albania', code: 'AL'}
+      ];
+      $compile(element)($scope);
+      $scope.$digest();
+
+      $scope.initialValue = {name: 'Aland Islands', code: 'AX'};
+      $scope.$digest();
+
+      expect(element.isolateScope().searchStr).toBe('Aland Islands');
+      expect($scope.countryCode).toBe('AX');
+
+    });
+
     it('should set validity to true', function() {
-      var element = angular.element('<form name="form"><div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="countrySelected" local-data="countries" search-fields="name" title-field="name" minlength="1" initial-value="{{initialValue}}" field-required="true"/></form>');
+      var element = angular.element('<form name="form"><div angucomplete-alt id="ex1" placeholder="Search countries" selected-object="countrySelected" local-data="countries" search-fields="name" title-field="name" minlength="1" initial-value="initialValue" field-required="true"/></form>');
       $scope.countries = [
         {name: 'Afghanistan', code: 'AF'},
         {name: 'Aland Islands', code: 'AX'},
@@ -1267,6 +1292,53 @@ describe('angucomplete-alt', function() {
       // should clear both
       expect(inputField1.val()).toBe('');
       expect(inputField2.val()).toBe('');
+    });
+
+    it('should clear input fields', function() {
+      var element = angular.element(
+        '<form name="name">' +
+        '  <div angucomplete-alt id="ex1" placeholder="Search people" selected-object="selectedPerson" local-data="people" search-fields="firstName" title-field="firstName" minlength="1" field-required="true"/>' +
+        '</form>'
+      );
+      $scope.clearInput = function(id) {
+        $scope.$broadcast('angucomplete-alt:clearInput', id);
+      };
+      $scope.selectedPerson = undefined;
+      $scope.people = [
+        {firstName: 'Emma'},
+        {firstName: 'Elvis'},
+        {firstName: 'John'}
+      ];
+      $compile(element)($scope);
+      $scope.$digest();
+
+      expect(element.hasClass('ng-invalid-autocomplete-required')).toBe(true);
+
+      var inputField = element.find('#ex1_value');
+      var eKeydown = $.Event('keydown');
+      var eKeyup = $.Event('keyup');
+
+      inputField.val('e');
+      inputField.trigger('input');
+      eKeyup.which = 'e'.charCodeAt(0);
+      inputField.trigger(eKeyup);
+      $timeout.flush();
+
+      expect(element.find('.angucomplete-row').length).toBe(2);
+
+      // make a selection
+      eKeydown.which = KEY_DW;
+      inputField.trigger(eKeydown);
+      eKeydown.which = KEY_EN;
+      inputField.trigger(eKeydown);
+      expect(element.hasClass('ng-invalid-autocomplete-required')).toBe(false);
+      expect($scope.selectedPerson).toBeDefined();
+
+      $scope.clearInput('ex1');
+      $scope.$digest();
+
+      expect(inputField.val()).toBe('');
+      expect(element.hasClass('ng-invalid-autocomplete-required')).toBe(true);
     });
   });
 
