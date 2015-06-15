@@ -146,8 +146,6 @@
         unbindInitialValue = scope.$watch('initialValue', function(newval, oldval) {
 
           if (newval) {
-            unbindInitialValue();
-
             if (typeof newval === 'object') {
               scope.searchStr = extractTitle(newval);
               callOrAssign({originalObject: newval});
