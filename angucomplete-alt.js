@@ -23,7 +23,8 @@
 }(window, function (angular) {
 
   angular.module('angucomplete-alt', [] )
-    .directive('angucompleteAlt', ['$q', '$parse', '$http', '$sce', '$timeout', '$templateCache', function ($q, $parse, $http, $sce, $timeout, $templateCache) {
+    .directive('angucompleteAlt', ['$q', '$parse', '$http', '$sce', '$timeout', '$templateCache', 
+                                   function ($q, $parse, $http, $sce, $timeout, $templateCache) {
     // keyboard events
     var KEY_DW  = 40;
     var KEY_RT  = 39;
@@ -49,7 +50,12 @@
     // Set the default template for this directive
     $templateCache.put(TEMPLATE_URL,
         '<div class="angucomplete-holder" ng-class="{\'angucomplete-dropdown-visible\': showDropdown}">' +
-        '  <input id="{{id}}_value" name={{inputName}} ng-class="{\'angucomplete-input-not-empty\': notEmpty}" ng-model="searchStr" ng-disabled="disableInput" type="{{type}}" placeholder="{{placeholder}}" maxlength="{{maxlength}}" ng-focus="onFocusHandler()" class="{{inputClass}}" ng-focus="resetHideResults()" ng-blur="hideResults($event)" autocapitalize="off" autocorrect="off" autocomplete="off" ng-change="inputChangeHandler(searchStr)"/>' +
+        
+        '  <input id="{{id}}_value" name="{{inputName}}" ng-class="{\'angucomplete-input-not-empty\': notEmpty}"' + 
+        '   ng-model="searchStr" ng-disabled="disableInput" type="{{type}}" placeholder="{{placeholder}}" maxlength="{{maxlength}}" ' +
+        '   ng-focus="onFocusHandler()" class="{{inputClass}}" ng-focus="resetHideResults()" ng-blur="hideResults($event)" ' + 
+        '   autocapitalize="off" autocorrect="off" autocomplete="off" ng-change="inputChangeHandler(searchStr)">' +
+        
         '  <div id="{{id}}_dropdown" class="angucomplete-dropdown" ng-show="showDropdown">' +
         '    <div class="angucomplete-searching" ng-show="searching" ng-bind="textSearching"></div>' +
         '    <div class="angucomplete-searching" ng-show="!searching && (!results || results.length == 0)" ng-bind="textNoResults"></div>' +
@@ -74,7 +80,7 @@
         selectedObject: '=',
         customSelect: '=',
         customLookup: '=',
-        customLookupOnly: '=',
+        customLookupOnly: '@',
         customMatching: '=',
         keepInitialValueBinding: '=',
         disableInput: '=',
@@ -104,9 +110,10 @@
         fieldRequiredClass: '@',
         inputChanged: '=',
         autoMatch: '@',
-        focusOut: '&',
-        focusIn: '&',
+        focusOut: '=',
+        focusIn: '=',
         inputName: '@'
+        
       },
       templateUrl: function(element, attrs) {
         return attrs.templateUrl || TEMPLATE_URL;
@@ -115,6 +122,7 @@
         var inputField = elem.find('input');
         var minlength = MIN_LENGTH;
         var searchTimer = null;
+        var preventDCTimer = null;
         var hideTimer;
         var requiredClassName = REQUIRED_CLASS;
         var responseFormatter;
@@ -124,14 +132,71 @@
         var isScrollOn = false;
         var mousedownOn = null;
         var unbindInitialValue;
-
+        var currentX = -1;
+        var currentY = -1;
         elem.on('mousedown', function(event) {
+
+          currentX = event.pageX;
+          currentY = event.pageY;
+
+          elem.on('mousemove', function handler(evt) {
+            currentX = evt.pageX
+            currentY = evt.pageY;
+            elem.off('mousemove', handler);
+          });
+          
+          elem.on('mouseup', function handler(evt) {
+            elem.off('mouseup', handler);
+            var click = false;
+
+            if (evt.pageX == currentX && evt.pageY == currentY) {
+              //click
+              click = true;
+            } else {
+              //drag or select
+              if (inputField[0].selectionStart != inputField[0].selectionEnd) {
+                //SELECTION
+              } else {
+                //DRAG or just moved mouse, but selected nothing
+                click = true;
+              }
+            }
+
+            if (click) {
+              if (!scope.showDropdown) {
+                if (typeof scope.searchStr === 'undefined')
+                  scope.searchStr = '';
+                if (scope.searchStr != null && scope.searchStr.length >= minlength) {
+                  initResults();
+                  scope.searching = true;
+                  scope.preventDoubleClick = true;
+                  searchTimerComplete(scope.searchStr);
+                  if (preventDCTimer)
+                    $timeout.cancel(preventDCTimer);
+
+                  preventDCTimer = $timeout(function(){
+                    scope.preventDoubleClick = false;
+                  },150);
+                }
+              } else {
+                if (!scope.preventDoubleClick) {
+                  scope.hideResults(evt);
+                }
+                scope.preventDoubleClick = false;
+                  
+              }
+            }
+
+             
+          });
+          
           if (event.target.id) {
             mousedownOn = event.target.id;
           }
           else {
             mousedownOn = event.target.className;
           }
+
         });
 
         scope.sf = [];
@@ -143,18 +208,28 @@
         
         scope.currentIndex = null;
         scope.searching = false;
+
+        if (scope.keepInitialValueBinding) {
+          scope.$watch('searchStr', function(newval, oldval) {
+            if (newval) {
+              scope.initialValue = newval;
+            }  
+          });
+        }
+
         unbindInitialValue = scope.$watch('initialValue', function(newval, oldval) {
 
-          if (newval) {
+          if (typeof newval !== 'undefined') {
             if (typeof newval === 'object') {
               scope.searchStr = extractTitle(newval);
               callOrAssign({originalObject: newval});
             } else if (typeof newval === 'string' && newval.length > 0) {
               scope.searchStr = newval;
             } else {
-              if (console && console.error) {
+              scope.searchStr = '';
+              /*if (console && console.error) {
                 console.error('Tried to set initial value of angucomplete to', newval, 'which is an invalid value');
-              }
+              }*/
             }
 
             handleRequired(true);
@@ -162,6 +237,7 @@
               unbindInitialValue();
           }
         });
+        
 
         scope.$on('angucomplete-alt:clearInput', function (event, elementId) {
           if (!elementId || elementId === scope.id) {
@@ -266,10 +342,18 @@
           }
           else if (which === KEY_DW) {
             event.preventDefault();
-            if (!scope.showDropdown && scope.searchStr && scope.searchStr.length >= minlength) {
-              initResults();
-              scope.searching = true;
-              searchTimerComplete(scope.searchStr);
+            if (!scope.showDropdown) {
+              //if (scope.searchStr && scope.searchStr.length >= minlength) {
+                initResults();
+                scope.searching = true;
+                searchTimerComplete(scope.searchStr);
+              //} else if (scope.searchStr != null || scope.searchStr.length == 0) {
+//                scope.currentIndex = -1;
+//                
+//                scope.searching = false;
+//                scope.showDropdown = true;
+//                showAll();  
+//              }
             }
           }
           else if (which === KEY_ES) {
@@ -279,11 +363,9 @@
             });
           }
           else {
-            if (minlength === 0 && !scope.searchStr) {
-              return;
-            }
-
-            if (!scope.searchStr || scope.searchStr === '') {
+            if (typeof scope.searchStr === 'undefined')
+              scope.searchStr = '';  
+            if (scope.searchStr && scope.searchStr.length >= 0 && scope.searchStr.length < minlength) {
               scope.showDropdown = false;
             } else if (scope.searchStr.length >= minlength) {
               initResults();
@@ -356,7 +438,7 @@
           var which = ie8EventNormalizer(event);
           var row = null;
           var rowTop = null;
-
+          
           if (which === KEY_EN && scope.results) {
             if (scope.currentIndex >= 0 && scope.currentIndex < scope.results.length) {
               event.preventDefault();
@@ -403,28 +485,7 @@
               });
             }
           } else if (which === KEY_TAB) {
-            if (scope.results && scope.results.length > 0 && scope.showDropdown) {
-              if (scope.currentIndex === -1 && scope.overrideSuggestions) {
-                // intentionally not sending event so that it does not
-                // prevent default tab behavior
-                handleOverrideSuggestions();
-              }
-              else {
-                if (scope.currentIndex === -1) {
-                  scope.currentIndex = 0;
-                }
-                scope.selectResult(scope.results[scope.currentIndex]);
-                scope.$digest();
-              }
-            }
-            else {
-              // no results
-              // intentionally not sending event so that it does not
-              // prevent default tab behavior
-              if (scope.searchStr && scope.searchStr.length > 0) {
-                handleOverrideSuggestions();
-              }
-            }
+            // TAB does not select anything now
           }
         }
 
@@ -539,7 +600,6 @@
         function getLocalResults(str) {
           var i, match, s, value,
               matches = [];
-          console.log("getLocalResults...");
           
           //custom matches before ordinary
           if (scope.customLookup) {
@@ -588,7 +648,7 @@
 
         function searchTimerComplete(str) {
           // Begin the search
-          if (!str || str.length < minlength) {
+          if (str.length < minlength) {
             return;
           }
           if (scope.localData) {
@@ -648,15 +708,28 @@
         }
 
         function showAll() {
-          if (scope.localData) {
-            processResults(scope.localData, '');
+          var matches = [];
+          if (scope.customLookup) {
+            var moreMatches = scope.customLookup('', scope.localData);
+            if (moreMatches && moreMatches.length > 0) {
+              for(var m = 0; m < moreMatches.length; m++)
+                matches[matches.length] = moreMatches[m];
+            }
           }
-          else if (scope.remoteApiHandler) {
-            getRemoteResultsWithCustomHandler('');
+          if (scope.customLookupOnly) {
+            processResults(matches, '');
+          } else {  
+            if (scope.localData) {
+              processResults(scope.localData, '');
+            }
+            else if (scope.remoteApiHandler) {
+              getRemoteResultsWithCustomHandler('');
+            }
+            else {
+              getRemoteResults('');
+            }
           }
-          else {
-            getRemoteResults('');
-          }
+          
         }
 
         scope.onFocusHandler = function() {
@@ -664,11 +737,24 @@
             scope.focusIn();
           }
           if (minlength === 0 && (!scope.searchStr || scope.searchStr.length === 0)) {
-            scope.showDropdown = true;
-            showAll();
+            //this is now handled by mouseup listener
+            
+            //scope.showDropdown = true;
+            //showAll();
           }
         };
 
+        scope.hideResultsAlways = function(event) {
+          hideTimer = $timeout(function() {
+            clearResults();
+            scope.$apply(function() {
+              if (scope.searchStr !== null && scope.searchStr.length > 0) {
+                inputField.val(scope.searchStr);
+              }
+            });
+          }, BLUR_TIMEOUT);
+        }
+        
         scope.hideResults = function(event) {
           if (mousedownOn && mousedownOn.indexOf('angucomplete') >= 0) {
             mousedownOn = null;
@@ -685,13 +771,13 @@
             cancelHttpRequest();
 
             if (scope.focusOut) {
-              scope.focusOut();
+              scope.focusOut(scope.searchStr);
             }
 
             if (scope.overrideSuggestions) {
-              if (scope.searchStr && scope.searchStr.length > 0 && scope.currentIndex === -1) {
+              //if (scope.searchStr && scope.currentIndex === -1) {
                 handleOverrideSuggestions();
-              }
+              //}
             }
           }
         };
